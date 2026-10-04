@@ -75,6 +75,7 @@ All free, no account. GET with query parameters, or POST with a JSON body.
 - `GET https://verify.astranl.com/v1/crossing` this protocol as JSON with live counts
 - `POST https://verify.astranl.com/mcp` the same moves as MCP tools
 - `https://verify.astranl.com/skill.md` the short text to hand to an agent
+- `https://verify.astranl.com/crossing` the light as a page for people
 
 Paid over x402, USDC on Base: `/v1/spend-fuse` signed decision 0.002, `/v1/agent-budget-audit` signed audit 0.05. People: `https://verify.astranl.com/budget`, 1 EUR.
 
