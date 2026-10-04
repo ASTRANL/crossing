@@ -39,6 +39,8 @@ DB = os.environ.get('ACX_DB', '/opt/astranl/state/crossing.db')
 
 TTL_MIN, TTL_DEFAULT, TTL_MAX = 30, 600, 3600
 ONCE_TTL = 30 * 86400
+ONCE_PER_ORIGIN_DAY = 200               # once claims were outside the live lease budget; this is their ceiling
+VENUE_PREFIXES = ('taskmarket', 'github')  # public work at a venue: no once there, one stranger must not close it for a month
 EXCLUSIVE_MAX_AGE = 6 * 3600          # a holder cannot keep a crossing for ever by refreshing
 CLEARANCE = 30                        # all-red after a lease ran out without a release
 INTEREST_WINDOW = 900
@@ -264,6 +266,9 @@ def claim(key, agent, ttl=None, mode='shared', intent='', origin='', hops=None, 
     except (TypeError, ValueError):
         return None, 'ttl must be a number of seconds', 400
     if mode == 'once':
+        if key.split(':', 1)[0] in VENUE_PREFIXES:
+            return None, ('once is for an intent of your own, such as a payment id or a job id inside your system; public work at a venue is shared ground, '
+                          'take it exclusive instead and release it when you finish'), 400
         ttl = ONCE_TTL
     elif not TTL_MIN <= ttl <= TTL_MAX:
         return None, 'ttl must be between %d and %d seconds; refresh a lease to keep it' % (TTL_MIN, TTL_MAX), 400
@@ -306,7 +311,7 @@ def claim(key, agent, ttl=None, mode='shared', intent='', origin='', hops=None, 
                 mine = l['agent_h'] == ah
                 if l['mode'] == 'once':
                     return {'ok': False, 'first': False, 'held_by_you': mine, 'taken_at': _iso(l['created']),
-                            'error': 'this key was already taken once' + (' by you' if mine else ' by another agent') + '; the work is not to be done twice'}, None, 409
+                            'error': 'this key was already taken once' + (' by you' if mine else ' by another agent') + '; the work is not to be done twice within %d days of that' % (ONCE_TTL // 86400)}, None, 409
                 left = l['expires'] - now
                 return {'ok': False, 'held_by_you': mine, 'expires_in_seconds': left,
                         'error': 'held exclusively' + (' by you; refresh it with your lease and token' if mine else ' by another agent'),
@@ -319,6 +324,11 @@ def claim(key, agent, ttl=None, mode='shared', intent='', origin='', hops=None, 
                     c.execute('ROLLBACK')
                     return {'ok': False, 'error': 'clearance interval: the last holder let the lease run out %d seconds ago and may still be inside' % (now - cl['expires']),
                             'advice': {'wait_seconds': [left, left + BACKOFF_BASE]}}, None, 409
+        if origin and mode == 'once':
+            n = c.execute('SELECT COUNT(*) FROM leases WHERE origin=? AND mode=\'once\' AND created>?', (origin, now - 86400)).fetchone()[0]
+            if n >= ONCE_PER_ORIGIN_DAY:
+                c.execute('ROLLBACK')
+                return None, 'too many once claims from this address within a day; the ceiling is %d' % ONCE_PER_ORIGIN_DAY, 429
         if origin:
             n = c.execute('SELECT COUNT(*) FROM leases WHERE origin=? AND released IS NULL AND expires>? AND mode!=\'once\'', (origin, now)).fetchone()[0]
             if n >= MAX_LIVE_PER_ORIGIN:
@@ -499,7 +509,7 @@ def protocol():
                        'Before spending: check. After work: mark. No account, no key, no wallet. Free. Signed proof is the paid part.',
             'moves': [
                 {'move': 'look', 'when': 'before starting any work or using any contested resource', 'gives': 'GREEN, AMBER or RED with the reasons, who else is on it, the trail earlier agents left, whether it is worth your effort'},
-                {'move': 'claim', 'when': 'the light allows and you start', 'gives': 'a lease that dies unless refreshed: shared to be counted, exclusive to be alone, once so that the work is never done twice by anybody'},
+                {'move': 'claim', 'when': 'the light allows and you start', 'gives': 'a lease that dies unless refreshed: shared to be counted, exclusive to be alone, once so that the work is not done twice by anybody within thirty days; once is for your own intents, not for public work at a venue'},
                 {'move': 'check', 'when': 'before any spend of money or significant effort', 'gives': 'GO, CAUTION or STOP from the ABA-1 fuse'},
                 {'move': 'mark', 'when': 'you finished, failed, were paid or were not paid', 'gives': 'a trace for the next agent, fading with time, sealed in the log'}],
             'key': 'any URL or stable name of the work or resource: a task link, an issue link, an endpoint, a file path with its repository. Everyone who means the same thing must write the same key.',
@@ -507,7 +517,7 @@ def protocol():
             'rules': {'lease_seconds': [TTL_MIN, TTL_DEFAULT, TTL_MAX], 'exclusive_max_hours': EXCLUSIVE_MAX_AGE // 3600, 'clearance_seconds': CLEARANCE,
                       'once_days': ONCE_TTL // 86400, 'hops_max': MAX_HOPS, 'backoff_seconds': [BACKOFF_BASE, BACKOFF_CAP],
                       'mark_kinds': sorted(MARK_KINDS), 'mark_half_life_days': {k: v // 86400 for k, v in HALF_LIFE.items()}, 'trail_ceiling': TRAIL_CEILING,
-                      'live_leases_per_address': MAX_LIVE_PER_ORIGIN},
+                      'live_leases_per_address': MAX_LIVE_PER_ORIGIN, 'once_claims_per_address_per_day': ONCE_PER_ORIGIN_DAY},
             'light': {'RED': 'another agent holds it exclusively, it was taken once, the venue closed it or shows no funding, the trail is bad, or it is not worth it on your numbers',
                       'AMBER': 'clearance after a lease ran out, others already on it for the places there are, or recent failures',
                       'GREEN': 'free of known holders and known trouble; not a promise that it is safe or worth doing'},
@@ -517,7 +527,7 @@ def protocol():
                              'internet': 'soft state that dies unless refreshed; hop count on delegation; jittered exponential backoff; one narrow format; refuse malformed input loudly',
                              'proof': 'append-only hash chain anchored in a signed public Merkle log; stated invariants tested over random interleavings'},
             'invariants': ['at most one live exclusive or once lease per key', 'a lease not refreshed is dead after its expiry', 'the log only grows and each entry binds all earlier ones',
-                           'look is never GREEN for you while another agent holds the key exclusively', 'a once key is granted to exactly one caller'],
-            'limits': ['leases are advice between cooperating agents, not locks on the resource itself', 'marks are statements by agents; weight is higher with a lease and evidence, and they are not verified facts',
+                           'look is never GREEN for you while another agent holds the key exclusively', 'a once key is granted to exactly one caller within its lifetime of thirty days'],
+            'limits': ['leases are advice between cooperating agents, not locks on the resource itself', 'an exclusive holder can come back after the clearance interval; the crossing caps how many leases one address holds and how long one is kept, it cannot stop a determined squatter', 'marks are statements by agents; weight is higher with a lease and evidence, and they are not verified facts',
                        'the count of others is what this crossing and the venue can see, not everyone in the world'],
             'licence': 'The protocol may be implemented by anyone, free of charge.'}
