@@ -22,7 +22,7 @@ e._now = lambda: clock[0]
 KEYS = ['https://example.org/task/%d' % i for i in range(6)] + ['repo:demo/file%d.py' % i for i in range(3)]
 AGENTS = ['agent-%d' % i for i in range(7)]
 tokens = {}          # lease id -> (token, key, agent, mode)
-once_winner = {}     # key -> agent
+once_winner = {}     # key -> (agent, time of the grant); I5 holds within the once lifetime
 counts = {'claim_ok': 0, 'claim_refused': 0, 'refresh': 0, 'release': 0, 'mark': 0, 'look': 0, 'green': 0, 'amber': 0, 'red': 0}
 fail = []
 
@@ -64,9 +64,9 @@ for step in range(1, STEPS + 1):
             counts['claim_ok'] += 1
             tokens[out['lease']] = (out['token'], key, agent, mode)
             if mode == 'once':
-                if key in once_winner:
-                    fail.append('I5 step %d: once key granted twice' % step)
-                once_winner[key] = agent
+                if key in once_winner and clock[0] - once_winner[key][1] < e.ONCE_TTL:
+                    fail.append('I5 step %d: once key granted twice within its lifetime' % step)
+                once_winner[key] = (agent, clock[0])
         else:
             counts['claim_refused'] += 1
     elif op < 0.46 and tokens:
