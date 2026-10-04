@@ -59,7 +59,17 @@ for step in range(1, STEPS + 1):
     key, agent = rnd.choice(KEYS), rnd.choice(AGENTS)
     if op < 0.34:
         mode = rnd.choice(['shared', 'exclusive', 'exclusive', 'once'])
-        out, err, st = e.claim(key, agent, ttl=rnd.choice([30, 60, 600, 3600]), mode=mode, origin='o' + agent[-1])
+        want = rnd.choice([None, None, 1, 2, 3]) if mode == 'shared' else None
+        if want is not None:                                    # I6 is judged against the state just before the claim
+            c0 = e.db()
+            n_before = c0.execute('SELECT COUNT(DISTINCT agent_h) FROM leases WHERE key_h=? AND released IS NULL AND expires>? AND agent_h!=?',
+                                  (e._h(key), int(clock[0]), e._h(agent))).fetchone()[0]
+            c0.close()
+        out, err, st = e.claim(key, agent, ttl=rnd.choice([30, 60, 600, 3600]), mode=mode, origin='o' + agent[-1], slots=want)
+        if want is not None and out and out.get('ok') and out.get('token') and n_before >= want:
+            fail.append('I6 step %d: shared claim with slots %d granted while %d others hold' % (step, want, n_before))
+        if want is not None and out and out.get('full') and n_before < want:
+            fail.append('I6 step %d: refused as full with %d others and %d slots' % (step, n_before, want))
         if out and out.get('ok') and out.get('token'):
             counts['claim_ok'] += 1
             tokens[out['lease']] = (out['token'], key, agent, mode)
