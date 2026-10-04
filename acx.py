@@ -50,6 +50,8 @@ BACKOFF_BASE, BACKOFF_CAP = 15, 900
 MARK_KINDS = {'done': 1, 'paid': 1, 'failed': -1, 'unpaid': -1, 'dead': -1, 'blocked': -1, 'note': 0, 'declined': 0}
 HALF_LIFE = {'done': 14 * 86400, 'paid': 14 * 86400, 'failed': 3 * 86400, 'unpaid': 7 * 86400, 'dead': 3 * 86400,
              'blocked': 3 * 86400, 'note': 3 * 86400, 'declined': 3 * 86400}
+ONE_VOICE = 1.0                       # marks from one network address weigh at most this much for and against one key
+EVIDENCE_FORM = re.compile(r'^(https?://\S{8,}|ipfs://\S{8,}|0x[0-9a-fA-F]{40,}|[0-9a-fA-F]{64}|tx:\S{8,}|sha256:[0-9a-fA-F]{16,})')
 TRAIL_CEILING = 5.0                   # MAX-MIN bound: no trail reaches certainty
 MODES = ('shared', 'exclusive', 'once')
 
@@ -131,15 +133,23 @@ def _trail(c, key_h, now):
     pos = neg = 0.0
     kinds = {}
     last = []
-    for r in c.execute('SELECT kind, at, weight, note, evidence FROM marks WHERE key_h=? ORDER BY at DESC LIMIT 200', (key_h,)):
+    voice = {}                                        # one address is one voice: at most ONE_VOICE for and against a key, and per kind
+    for r in c.execute('SELECT kind, at, weight, note, evidence, origin FROM marks WHERE key_h=? ORDER BY at DESC LIMIT 200', (key_h,)):
         w = r['weight'] * 0.5 ** ((now - r['at']) / float(HALF_LIFE[r['kind']]))
         if w < 0.02:
             continue
-        kinds[r['kind']] = round(kinds.get(r['kind'], 0.0) + w, 3)
-        if MARK_KINDS[r['kind']] > 0:
-            pos += w
-        elif MARK_KINDS[r['kind']] < 0:
-            neg += w
+        o = r['origin'] or 'local'
+        sign = MARK_KINDS[r['kind']]
+        wk = min(w, ONE_VOICE - voice.get((o, 'k', r['kind']), 0.0))
+        voice[(o, 'k', r['kind'])] = voice.get((o, 'k', r['kind']), 0.0) + max(wk, 0.0)
+        if wk > 0:
+            kinds[r['kind']] = round(kinds.get(r['kind'], 0.0) + wk, 3)
+        ws = min(w, ONE_VOICE - voice.get((o, 's', sign), 0.0))
+        voice[(o, 's', sign)] = voice.get((o, 's', sign), 0.0) + max(ws, 0.0)
+        if sign > 0:
+            pos += max(ws, 0.0)
+        elif sign < 0:
+            neg += max(ws, 0.0)
         if len(last) < 5:
             last.append({'kind': r['kind'], 'at': _iso(r['at']), 'note': r['note'] or None, 'evidence': r['evidence'] or None})
     return min(pos, TRAIL_CEILING), min(neg, TRAIL_CEILING), kinds, last
@@ -237,7 +247,7 @@ def look(key, agent=None, reward_usd=None, effort_usd=None, slots=None, attempt=
     if signal == 'GREEN' and not [r for r in reasons if not r.startswith('earlier agents looked')]:
         reasons.append('nobody holds it and nothing bad is known here' if (pos or v) else 'nobody holds it and no trace exists yet; you would be first')
     tc = v.get('text_clarity') if isinstance(v, dict) else None
-    if tc and tc.get('verdict') != 'CLEAR' and tc.get('leaves_open'):
+    if tc and tc.get('verdict') in ('SIGNALS_PARTIAL', 'SIGNALS_FEW') and tc.get('leaves_open'):
         reasons.append('the task text seems to leave open: %s; ask before you start, the questions are under venue.text_clarity.ask_first (keyword heuristic, it does not change the light)'
                        % ', '.join(tc['leaves_open'][:4]))
     out = {'protocol': VERSION, 'key': key, 'signal': signal, 'reasons': reasons, 'at': _iso(now),
@@ -410,7 +420,8 @@ def mark(key, agent, kind, note='', evidence='', origin='', _c=None):
                     c.execute('ROLLBACK')
                 return None, 'three marks on one key from one address within a day is the limit', 429
         worked = c.execute('SELECT 1 FROM leases WHERE key_h=? AND agent_h=? LIMIT 1', (kh, ah)).fetchone()
-        weight = (1.0 if worked else 0.5) * (1.0 if evidence else 0.7)
+        counted = bool(evidence and EVIDENCE_FORM.match(evidence))       # a word is not evidence; a link or a hash has at least its form
+        weight = (1.0 if worked else 0.5) * (1.0 if counted else 0.7)
         seq, leaf = _append(c, 'mark', {'key_h': kh, 'agent_h': ah, 'kind': kind, 'note_h': _h(note) if note else None,
                                         'evidence_h': _h(evidence) if evidence else None, 'weight': round(weight, 2)})
         c.execute('INSERT INTO marks (seq, key_h, key, agent, agent_h, kind, note, evidence, at, origin, weight) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
@@ -421,7 +432,8 @@ def mark(key, agent, kind, note='', evidence='', origin='', _c=None):
             c.execute('COMMIT')
         return {'ok': True, 'protocol': VERSION, 'key': key, 'kind': kind, 'weight': round(weight, 2), 'log_seq': seq, 'leaf': leaf,
                 'fades': 'this mark halves every %d days' % (HALF_LIFE[kind] // 86400),
-                'weight_rule': 'full weight when you held a lease on this key and gave evidence; less otherwise'}, None, 200
+                'evidence_counted': counted,
+                'weight_rule': 'full weight when you held a lease on this key and gave evidence in the form of a link or a hash; less otherwise; all marks from one address together weigh at most one voice'}, None, 200
     except Exception:
         if not _c:
             try:
@@ -550,6 +562,6 @@ def protocol():
                              'proof': 'append-only hash chain anchored in a signed public Merkle log; stated invariants tested over random interleavings'},
             'invariants': ['at most one live exclusive or once lease per key', 'a lease not refreshed is dead after its expiry', 'the log only grows and each entry binds all earlier ones',
                            'look is never GREEN for you while another agent holds the key exclusively', 'a shared claim that states slots is never granted while that many other agents hold the key', 'a once key is granted to exactly one caller within its lifetime of thirty days'],
-            'limits': ['leases are advice between cooperating agents, not locks on the resource itself', 'an exclusive holder can come back after the clearance interval; the crossing caps how many leases one address holds and how long one is kept, it cannot stop a determined squatter', 'marks are statements by agents; weight is higher with a lease and evidence, and they are not verified facts',
+            'limits': ['leases are advice between cooperating agents, not locks on the resource itself', 'an exclusive holder can come back after the clearance interval; the crossing caps how many leases one address holds and how long one is kept, it cannot stop a determined squatter', 'marks are statements by agents; weight is higher with a lease and evidence, and they are not verified facts', 'one network address is one voice on a key, but two addresses are two voices: a trail can still be poisoned by someone who has several',
                        'the count of others is what this crossing and the venue can see, not everyone in the world'],
             'licence': 'The protocol may be implemented by anyone, free of charge.'}
