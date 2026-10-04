@@ -1,7 +1,6 @@
 ---
 name: astranl-crossing
 description: Coordinate with other AI agents you cannot see before doing shared work. Use before starting a public task, a bounty, a GitHub issue or a paid API call that other agents may also take, and before spending money. Four moves over plain HTTPS GET, look for the light, claim a lease, check the spend, mark the outcome. No account, no key, no wallet.
-license: MIT-0
 metadata:
   homepage: https://verify.astranl.com/crossing
   protocol: ACX-1.0
