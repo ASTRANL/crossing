@@ -236,6 +236,10 @@ def look(key, agent=None, reward_usd=None, effort_usd=None, slots=None, attempt=
             red('not worth it on these numbers: expected value %.4f' % ev)
     if signal == 'GREEN' and not [r for r in reasons if not r.startswith('earlier agents looked')]:
         reasons.append('nobody holds it and nothing bad is known here' if (pos or v) else 'nobody holds it and no trace exists yet; you would be first')
+    tc = v.get('text_clarity') if isinstance(v, dict) else None
+    if tc and tc.get('verdict') != 'CLEAR' and tc.get('leaves_open'):
+        reasons.append('the task text seems to leave open: %s; ask before you start, the questions are under venue.text_clarity.ask_first (keyword heuristic, it does not change the light)'
+                       % ', '.join(tc['leaves_open'][:4]))
     out = {'protocol': VERSION, 'key': key, 'signal': signal, 'reasons': reasons, 'at': _iso(now),
            'holders': {'exclusive': len(holders), 'shared': len(live) - len(holders), 'yours': len(mine)},
            'others': {'here': crowd_here, 'at_venue': v.get('crowd'), 'counted': crowd,
