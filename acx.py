@@ -45,9 +45,9 @@ INTEREST_WINDOW = 900
 MAX_LIVE_PER_ORIGIN = 50
 MAX_HOPS = 8
 BACKOFF_BASE, BACKOFF_CAP = 15, 900
-MARK_KINDS = {'done': 1, 'paid': 1, 'failed': -1, 'unpaid': -1, 'dead': -1, 'blocked': -1, 'note': 0}
+MARK_KINDS = {'done': 1, 'paid': 1, 'failed': -1, 'unpaid': -1, 'dead': -1, 'blocked': -1, 'note': 0, 'declined': 0}
 HALF_LIFE = {'done': 14 * 86400, 'paid': 14 * 86400, 'failed': 3 * 86400, 'unpaid': 7 * 86400, 'dead': 3 * 86400,
-             'blocked': 3 * 86400, 'note': 3 * 86400}
+             'blocked': 3 * 86400, 'note': 3 * 86400, 'declined': 3 * 86400}
 TRAIL_CEILING = 5.0                   # MAX-MIN bound: no trail reaches certainty
 MODES = ('shared', 'exclusive', 'once')
 
@@ -216,6 +216,8 @@ def look(key, agent=None, reward_usd=None, effort_usd=None, slots=None, attempt=
         amber('recent failure marks weigh %.1f against %.1f for success' % (neg, pos))
     if kinds.get('done', 0) >= 0.5 and not other_excl:
         amber('an earlier agent marked this work done; read the trail before doing it again')
+    if kinds.get('declined', 0) >= 1.0:
+        reasons.append('earlier agents looked at this and declined it; their notes are in the trail')
     n_slots = max(1, int(slots or v.get('slots') or 1))
     if crowd >= n_slots and not other_excl:
         amber('%s%d other%s already on this work for %d place%s' % ('at least ' if v.get('timeline_complete') is False else '', crowd, ' is' if crowd == 1 else 's are', n_slots, '' if n_slots == 1 else 's'))
@@ -230,7 +232,7 @@ def look(key, agent=None, reward_usd=None, effort_usd=None, slots=None, attempt=
                  'rule': 'places over others plus one, halved because it is an estimate, times the reward, minus your effort'}
         if ev <= 0:
             red('not worth it on these numbers: expected value %.4f' % ev)
-    if signal == 'GREEN' and not reasons:
+    if signal == 'GREEN' and not [r for r in reasons if not r.startswith('earlier agents looked')]:
         reasons.append('nobody holds it and nothing bad is known here' if (pos or v) else 'nobody holds it and no trace exists yet; you would be first')
     out = {'protocol': VERSION, 'key': key, 'signal': signal, 'reasons': reasons, 'at': _iso(now),
            'holders': {'exclusive': len(holders), 'shared': len(live) - len(holders), 'yours': len(mine)},
@@ -401,7 +403,7 @@ def mark(key, agent, kind, note='', evidence='', origin='', _c=None):
 
 
 def release(lease, token, outcome=None, note='', evidence='', origin=''):
-    """Give the crossing back. outcome done or failed also leaves a mark."""
+    """Give the crossing back. An outcome, done, failed or declined, also leaves a mark of that kind."""
     now = int(_now())
     c = db()
     try:
