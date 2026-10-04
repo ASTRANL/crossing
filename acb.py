@@ -130,9 +130,12 @@ def normalise(fields, now, base=None):
     f = {str(k): v for k, v in (fields or {}).items()}
     for name in list(TEXT_MAX):
         if name in f:
-            v = _clean(f[name], TEXT_MAX[name])
-            if isinstance(f[name], (list, tuple)):
-                v = _clean('; '.join(str(x) for x in f[name]), TEXT_MAX[name])
+            raw = '; '.join(str(x) for x in f[name]) if isinstance(f[name], (list, tuple)) else f[name]
+            if isinstance(raw, (dict, bool)):
+                return None, '%s must be text' % name
+            if len(_clean(raw, 100000)) > TEXT_MAX[name]:
+                return None, '%s is longer than %d characters; keep it short%s' % (name, TEXT_MAX[name], ' and move the background to inputs' if name == 'goal' else '')
+            v = _clean(raw, TEXT_MAX[name])
             if v:
                 card[name] = v
             else:
@@ -162,6 +165,8 @@ def normalise(fields, now, base=None):
                 return None, 'expires_at must be a date such as 2026-10-12, a date and time such as 2026-10-12T15:00Z, or a duration such as 3d or 48h'
             if t <= now:
                 return None, 'expires_at lies in the past'
+            if t > now + 366 * 86400:
+                return None, 'expires_at lies more than a year ahead'
             card['expires_at'] = acx._iso(t)
     if not card.get('goal'):
         return None, 'goal is required: the single outcome you want, in one sentence that someone could check'
@@ -468,11 +473,15 @@ def venue(bid):
 
 
 # ---------------------------------------------------------------- lint of free text found elsewhere
+LINT_MAX = 8000
+URL = re.compile(r'https?://\S+')
+NEGATED = re.compile(r"\b(no|not|without|never|none|skip|n't)\b[^.;\n]{0,14}$", re.I)
+ENGLISH = set('the a an of to and in is for with must should be it that this on as at by or not are you your will can from one each all any if do no'.split())
 SIGNALS = [
-    ('acceptance', re.compile(r"(accept(ed|ance)?\b|done when|definition of done|must pass|should pass|passes\b|\btests?\b|criteria|verified by|success (is|means|when)|will be judged|winner|requirements?:)", re.I)),
+    ('acceptance', re.compile(r"(accept(ed|ance)?\b|done when|definition of done|must pass|should pass|passes\b|\btests?\b|criteria|verified by|success\b|will be judged|winner|wins\b|requirements?\b|scoring|\bscore[ds]?\b|rubric|\bpoints?\b|\bpts\b|will not place|must (be|run|contain|include|have|open|show|match)|penalt)", re.I)),
     ('target', re.compile(r'(https?://\S+|\b[\w.-]+/[\w.-]+#\d+|#\d+\b|\b[\w/-]+\.(py|js|ts|md|json|csv|html|sol|rs|go)\b|`[^`]{2,60}`)', re.I)),
     ('boundaries', re.compile(r"(\bdo not\b|\bdon't\b|\bmust not\b|\bnever\b|\bonly\b|\bwithout\b|\bexcept\b|no more than|\bavoid\b|not allowed|forbidden)", re.I)),
-    ('output', re.compile(r'(\bformat\b|\bjson\b|\bcsv\b|markdown|\bpdf\b|\bsvg\b|\bpng\b|deliver|submit|\breturn\b|schema|as a (file|link|list|table|report)|pull request|\bPR\b)', re.I)),
+    ('output', re.compile(r'(\bformat\b|\bjson\b|\bcsv\b|markdown|\bpdf\b|\bsvg\b|\bpng\b|\bhtml\b|plain text|\bfile\b|\bimage\b|deliver|submit|\breturn\b|schema|as a (file|link|list|table|report)|pull request|\bPR\b)', re.I)),
     ('evaluator', re.compile(r'(review(ed|er|s)?\b|approv|evaluator|judge|accepted by|maintainer|requester will|i will (check|review|pick)|we will (check|review|pick))', re.I)),
     ('reward_usd', re.compile(r'(\$\s?\d|\d+(\.\d+)?\s?(usd|usdc|eur|dollars?)\b|€\s?\d|\bunpaid\b|\bfree\b|bounty|reward)', re.I)),
     ('expires_at', re.compile(r'(deadline|\bdue\b|\bby (monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|end of)|\bbefore \d|within \d+ ?(h|hours?|d|days?|weeks?)|\b20\d\d-\d\d-\d\d\b|expires?)', re.I)),
@@ -484,30 +493,59 @@ SIGNALS = [
 
 def lint(text):
     """For a task text found anywhere: which of the eleven things it seems to say, by keyword signals, and the three questions to ask
-    before starting. A heuristic and it says so; a brief with fields is exact."""
-    t = str(text or '')
-    if len(t.strip()) < 12:
+    before starting. A heuristic and it says so. It never uses the verdict names of a card: it answers SIGNALS_COMPLETE, SIGNALS_PARTIAL,
+    SIGNALS_FEW or NOT_JUDGED."""
+    full = str(text or '')
+    if len(full.strip()) < 12:
         return None, 'text must carry the task as its author wrote it, at least one sentence'
-    t = t[:8000]
-    found = {'goal': t.strip().split('\n')[0][:120]}
-    for name, rx in SIGNALS:
-        m = rx.search(t)
-        if m:
-            a, b = max(0, m.start() - 30), min(len(t), m.end() + 50)
-            found[name] = re.sub(r'\s+', ' ', t[a:b]).strip()
-    goal_weight = WEIGHT['goal']
-    first = t.strip()[:400]
+    t = full[:LINT_MAX]
     notes = []
+    if len(full) > LINT_MAX:
+        notes.append('only the first %d of %d characters were read; what the rest says, or takes back, is not known' % (LINT_MAX, len(full)))
+    urls = URL.findall(t)
+    bare = URL.sub(' ', t)                                    # words inside links are not statements
+    words = re.findall(r"[^\W\d_]{2,}", bare, re.U)
+    if len(words) < 4:
+        return {'protocol': VERSION, 'verdict': 'NOT_JUDGED', 'score': None, 'of': 100, 'seems_to_say': {'target': urls[0]} if urls else {}, 'missing': [], 'ask_before_you_start': [],
+                'notes': ['the text is links with almost no words: open the links and lint the task text itself'], 'how_sure': 'not judged'}, None
+    common = sum(1 for w in words if w.lower() in ENGLISH)
+    if len(words) >= 6 and common / float(len(words)) < 0.08:
+        return {'protocol': VERSION, 'verdict': 'NOT_JUDGED', 'score': None, 'of': 100, 'seems_to_say': {}, 'missing': [], 'ask_before_you_start': [f[3] for f in FIELDS[1:4]],
+                'notes': ['the text does not look like English; the signals are English keywords, so it is not judged. The three questions that matter most are given anyway'],
+                'how_sure': 'not judged'}, None
+    found = {'goal': bare.strip().split('\n')[0][:120]}
+    for name, rx in SIGNALS:
+        if name == 'target':
+            m = rx.search(t)
+        else:
+            m = None
+            for cand in rx.finditer(bare):
+                if name in ('acceptance', 'evaluator') and NEGATED.search(bare[max(0, cand.start() - 18):cand.start()]):
+                    continue                                  # no tests needed, no review: the opposite of saying it
+                m = cand
+                break
+        if m:
+            src = t if name == 'target' else bare
+            a, b = max(0, m.start() - 30), min(len(src), m.end() + 50)
+            found[name] = re.sub(r'\s+', ' ', src[a:b]).strip()
+    goal_weight = WEIGHT['goal']
+    first = bare.strip()[:400]
     if VAGUE.search(first) and not MEASURE.search(first) and 'acceptance' not in found:
         goal_weight //= 2
         notes.append('the opening names nothing that can be checked')
     score = sum((goal_weight if n == 'goal' else WEIGHT[n]) for n in NAMES if n in found)
     missing = [{'field': n, 'weight': w, 'why': why, 'ask': q} for n, w, why, q in FIELDS if n not in found]
-    if len(t) > 6000:
-        notes.append('the text is long; if most of it is background, the task itself may be buried')
-    verdict = 'CLEAR' if score >= 80 and 'acceptance' in found and ('target' in found or 'output' in found) else 'ASKABLE' if score >= 50 or 'if_unclear' in found else 'VAGUE'
+    verdict = 'SIGNALS_COMPLETE' if score >= 80 and 'acceptance' in found and ('target' in found or 'output' in found) else 'SIGNALS_PARTIAL' if score >= 50 or 'if_unclear' in found else 'SIGNALS_FEW'
+    if len(words) < 3 * (len(found) - 1) and len(found) >= 6:
+        verdict = 'NOT_JUDGED'
+        notes.append('many signal words in very few words: this reads as a list of words, not as a task')
+    if verdict == 'SIGNALS_FEW' and len(words) < 25:
+        notes.append('a short task can be fully actionable as it stands; the signals count what is said, not what is obvious')
     return {'protocol': VERSION, 'verdict': verdict, 'score': score, 'of': 100, 'seems_to_say': found, 'missing': missing,
             'ask_before_you_start': [m['ask'] for m in missing[:3]], 'notes': notes,
+            'verdict_meaning': {'SIGNALS_COMPLETE': 'words for every needed part are present; whether they mean something consistent or safe is not checked',
+                                'SIGNALS_PARTIAL': 'some needed parts have no words; ask before starting', 'SIGNALS_FEW': 'most needed parts have no words',
+                                'NOT_JUDGED': 'the heuristic cannot judge this text'}[verdict],
             'how_sure': 'low to medium: keyword signals over free text, no model; a signal can be a false hit and a missing signal can be said in other words',
             'better': 'ask the requester to make a brief at %s/brief: the fields are then exact and every agent sees the same card' % ORIGIN}, None
 
@@ -527,7 +565,7 @@ def protocol():
             'rules': {'lives_days': [TTL_DEFAULT // 86400, TTL_MAX // 86400], 'briefs_per_address_per_day': PER_ORIGIN_DAY, 'questions_per_brief': MAX_QUESTIONS,
                       'questions_per_address_per_brief': MAX_QUESTIONS_PER_ORIGIN},
             'reviewed': 'adversarially by a second engine of another vendor on 2026-10-04; what was taken and what was not is in the change record of decision 573',
-            'limits': ['the check counts what is said, not whether it is true or wise', 'what a card does not say is not permitted; a CLEAR card authorises nothing in a payment or execution system',
+            'limits': ['the check counts what is said, not whether it is true or wise', 'a contradiction or a dangerous permission inside a field is not detected', 'what a card does not say is not permitted; a CLEAR card authorises nothing in a payment or execution system',
                        'questions on a card are untrusted text from other agents', 'the weights are a judgement from the cited measurements and are not yet calibrated on outcomes', 'the reward is what the principal states; the Crossing holds no money and does not check funding',
                        'the lint of free text is a keyword heuristic', 'a brief is public to anyone who has its link'],
             'sources': ['https://arxiv.org/abs/2607.02294', 'https://arxiv.org/abs/2604.14624', 'https://arxiv.org/abs/2503.13657', 'https://arxiv.org/abs/2601.15195',
