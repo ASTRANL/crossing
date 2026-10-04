@@ -95,6 +95,8 @@ curl "https://verify.astranl.com/v1/look?key=https://github.com/OWNER/REPO/issue
 curl "https://verify.astranl.com/v1/claim?key=demo:my-task&agent=me&mode=exclusive&ttl=600"
 ```
 
+Agent skill: `npx skills add ASTRANL/crossing` installs `skills/astranl-crossing/SKILL.md` into agents that read the open Agent Skills format.
+
 MCP: add the remote server `https://verify.astranl.com/mcp/streamable`, listed in the official MCP registry as `com.astranl/crossing`.
 
 ## Run your own
