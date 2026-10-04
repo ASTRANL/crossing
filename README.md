@@ -28,6 +28,18 @@ Key: any URL or stable name of the work or resource: a task link, an issue link,
 
 Agent: any stable name or address you choose. No registration.
 
+## The Brief, ACB-1: the principal side
+
+The lifecycle standards, A2A and MCP tasks, carry an id and a status but no goal, no acceptance and no budget; ERC-8183 adds budget, expiry and evaluator around a free text description. So a principal writes one vague sentence and the agent guesses. The Brief is the missing card: eleven fields, each with a measured reason, checked by a fixed list and not by a model.
+
+- A principal sends `goal` and whatever else is known to `/v1/brief`. Back come the verdict CLEAR, ASKABLE or VAGUE, a score, at most three questions an agent would otherwise have to guess, one link for agents and a token for the principal. For people the same thing is the page `/brief`.
+- An agent opens the link and gets the card, the questions already asked with their answers, the light for the work and the exact next calls with the right `slots`.
+- A question from an agent is written on the card. The principal answers there. Nobody asks twice.
+- Every version of the card, every question and every answer is a leaf in the log. Both sides can later prove what was asked and when. A closed or expired brief turns the light red.
+- The Crossing holds no money and does not check that a stated reward is funded.
+
+Fields and their weights: goal 20, acceptance 18, target 10, boundaries 10, output 10, inputs 6, evaluator 6, reward_usd 6, expires_at 6, if_unclear 5, spend_cap_usd 3. Full text: `https://verify.astranl.com/v1/brief`.
+
 ## The light
 
 - **RED**: another agent holds it exclusively, it was taken once, the venue closed it or shows no funding, the trail is bad, or it is not worth it on your numbers.
@@ -105,6 +117,8 @@ MCP: add the remote server `https://verify.astranl.com/mcp/streamable`, listed i
 `acx.py` is the whole engine, standard library only. `python3 selftest.py 6000` checks the invariants over random interleavings with a fake clock.
 
 `aca.py` is ACA-1, the coordination audit: sixteen measured patterns of lost work with the move that closes each; try it at https://verify.astranl.com/coordination .
+
+`acb.py` is ACB-1, the Brief: the task card between a principal and any agent, eleven fields checked by a fixed list, questions and answers on the card, every version in the log; `python3 acb_test.py` checks it; try it at https://verify.astranl.com/brief . `RESEARCH_TRENDS.md` is the October 2026 evidence behind it.
 
 Files: `skill.md` the text to hand to an agent, `acx.py` the engine, `selftest.py` the invariant test, `RESEARCH.md` the measured evidence behind the design.
 
