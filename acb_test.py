@@ -65,10 +65,28 @@ b3 = acb.create({'goal': 'Count the open issues in repo example/site', 'expires_
 clock[0] += 3 * 3600
 ok(acb.read(b3['brief'])[0]['status'] == 'expired' and acb.venue(b3['brief'])['state'] == 'closed', 'expired brief is closed for the light')
 # lint
-l, _ = acb.lint('Make our docs better')
-ok(l['verdict'] == 'VAGUE' and len(l['ask_before_you_start']) == 3, 'vague text is VAGUE')
+l, _ = acb.lint('Make our docs better please')
+ok(l['verdict'] == 'SIGNALS_FEW' and len(l['ask_before_you_start']) == 3, 'vague text has few signals: %s' % l['verdict'])
 l2, _ = acb.lint('Fix the failing test in https://github.com/example/site/issues/12. Done when `pytest tests/test_api.py` passes. Do not change the public API. Submit a pull request. Bounty $20, deadline 2026-10-12. The maintainer will review. Ask in the issue if unclear. No expenses. See the attached log.')
-ok(l2['verdict'] == 'CLEAR' and l2['score'] >= 90, 'full text is CLEAR: %s %s' % (l2['verdict'], l2['score']))
+ok(l2['verdict'] == 'SIGNALS_COMPLETE' and l2['score'] >= 90, 'full text has all signals: %s %s' % (l2['verdict'], l2['score']))
+ok(acb.lint('tests a.py only json review free deadline ask budget attached')[0]['verdict'] == 'NOT_JUDGED', 'a bag of keywords is not judged')
+ok(acb.lint('https://example.invalid/tests/only/json/review/free/deadline/ask/budget/attached https://example.invalid/a.py')[0]['verdict'] == 'NOT_JUDGED', 'links alone are not judged')
+neg = acb.lint('No tests needed; no deadline; no budget; no review. Return json for a.py only, given 2; unpaid; ask nothing.')[0]
+ok('acceptance' not in neg['seems_to_say'] and 'evaluator' not in neg['seems_to_say'] and neg['verdict'] != 'SIGNALS_COMPLETE', 'negated acceptance and review are not counted: %s' % sorted(neg['seems_to_say']))
+ok(acb.lint('Devuelve \u00fanicamente la suma de dos y dos, por favor, sin nada m\u00e1s.')[0]['verdict'] == 'NOT_JUDGED', 'non English text is not judged')
+long = acb.lint('Fix the failing test in the repository. Done when pytest passes. ' + 'x' * 9000 + ' Acceptance is withdrawn.')[0]
+ok(any('first 8000' in n for n in long['notes']), 'a cut text says that it was cut')
+ok(acb.create({'goal': 'Count the issues. ' + 'y' * 600}, 'o1')[2] == 400, 'an oversized goal is refused')
+ok(acb.create({'goal': 'Count the open issues in the repository', 'expires_at': '99999999999'}, 'o1')[2] == 400, 'an expiry beyond a year is refused')
+# one address is one voice on the trail
+for i in range(3):
+    cc = acx.claim('poison-key', 'p-%d' % i, origin='attacker')[0]
+    acx.release(cc['lease'], cc['token'], 'failed', 'x', 'invented', 'attacker')
+lkp, _ = acx.look('poison-key', 'honest')
+ok(lkp['signal'] != 'RED' and lkp['trail']['failure'] <= 1.0, 'one address cannot turn a key RED alone: %s %s' % (lkp['signal'], lkp['trail']['failure']))
+c2 = acx.claim('poison-key', 'q-1', origin='second')[0]
+m2 = acx.release(c2['lease'], c2['token'], 'failed', 'x', 'https://example.org/proof-of-failure', 'second')[0]
+ok(m2['mark']['evidence_counted'] is True and acx.mark('poison-key', 'zz', 'failed', evidence='just words', origin='third')[0]['evidence_counted'] is False, 'evidence must have the form of a link or a hash')
 ok(acb.lint('hi')[1] is not None, 'empty text refused')
 # per address ceiling
 for i in range(acb.PER_ORIGIN_DAY + 1):
