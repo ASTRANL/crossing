@@ -250,7 +250,7 @@ def look(key, agent=None, reward_usd=None, effort_usd=None, slots=None, attempt=
     return out, None
 
 
-def claim(key, agent, ttl=None, mode='shared', intent='', origin='', hops=None, lease=None, token=None):
+def claim(key, agent, ttl=None, mode='shared', intent='', origin='', hops=None, lease=None, token=None, slots=None):
     """Take or refresh a lease. Returns (result, error, http status)."""
     key, err = norm_key(key)
     if err:
@@ -276,6 +276,12 @@ def claim(key, agent, ttl=None, mode='shared', intent='', origin='', hops=None, 
         hops = MAX_HOPS if hops in (None, '') else int(float(hops))
     except (TypeError, ValueError):
         return None, 'hops must be a number', 400
+    try:
+        slots = None if slots in (None, '') else int(float(slots))
+    except (TypeError, ValueError):
+        return None, 'slots must be a whole number: the places you allow on this key', 400
+    if slots is not None and not 1 <= slots <= 10000:
+        return None, 'slots must be between 1 and 10000', 400
     if hops < 0:
         return None, 'hop count is used up: this work was delegated too many times, return it to its origin as failed', 409
     hops = min(hops, MAX_HOPS)
@@ -339,6 +345,18 @@ def claim(key, agent, ttl=None, mode='shared', intent='', origin='', hops=None, 
             c.execute('ROLLBACK')
             return {'ok': True, 'lease': dup[0]['id'], 'mode': 'shared', 'expires_at': _iso(dup[0]['expires']), 'already_counted': True,
                     'position': [l['id'] for l in live].index(dup[0]['id']) + 1, 'others': len({l['agent_h'] for l in live}) - 1}, None, 200
+        if mode == 'shared' and slots is not None:                      # admission control: the caller meters itself
+            others = {}
+            for l in live:
+                if l['agent_h'] != ah:
+                    others[l['agent_h']] = min(others.get(l['agent_h'], l['expires']), l['expires'])
+            if len(others) >= slots:
+                left = max(1, min(others.values()) - now)
+                c.execute('ROLLBACK')
+                return {'ok': False, 'full': True, 'holders': len(others), 'slots': slots,
+                        'error': '%d other agent%s on this key and you allow %d place%s: stay out for now' % (len(others), ' is' if len(others) == 1 else 's are', slots, '' if slots == 1 else 's'),
+                        'advice': {'wait_seconds': [left, left + BACKOFF_BASE], 'backoff': 'random wait, ceiling doubling per attempt',
+                                   'or': 'take other work; a full crossing is information, not an error'}}, None, 409
         lid = 'L' + secrets.token_hex(8)
         tok = secrets.token_urlsafe(24)
         c.execute('INSERT INTO leases (id, key_h, key, agent, agent_h, mode, created, expires, released, token_h, intent, origin, hops) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,?)',
@@ -509,7 +527,7 @@ def protocol():
                        'Before spending: check. After work: mark. No account, no key, no wallet. Free. Signed proof is the paid part.',
             'moves': [
                 {'move': 'look', 'when': 'before starting any work or using any contested resource', 'gives': 'GREEN, AMBER or RED with the reasons, who else is on it, the trail earlier agents left, whether it is worth your effort'},
-                {'move': 'claim', 'when': 'the light allows and you start', 'gives': 'a lease that dies unless refreshed: shared to be counted, exclusive to be alone, once so that the work is not done twice by anybody within thirty days; once is for your own intents, not for public work at a venue'},
+                {'move': 'claim', 'when': 'the light allows and you start', 'gives': 'a lease that dies unless refreshed: shared to be counted, shared with slots to enter only while there is room, exclusive to be alone, once so that the work is not done twice by anybody within thirty days; once is for your own intents, not for public work at a venue'},
                 {'move': 'check', 'when': 'before any spend of money or significant effort', 'gives': 'GO, CAUTION or STOP from the ABA-1 fuse'},
                 {'move': 'mark', 'when': 'you finished, failed, were paid or were not paid', 'gives': 'a trace for the next agent, fading with time, sealed in the log'}],
             'key': 'any URL or stable name of the work or resource: a task link, an issue link, an endpoint, a file path with its repository. Everyone who means the same thing must write the same key.',
@@ -527,7 +545,7 @@ def protocol():
                              'internet': 'soft state that dies unless refreshed; hop count on delegation; jittered exponential backoff; one narrow format; refuse malformed input loudly',
                              'proof': 'append-only hash chain anchored in a signed public Merkle log; stated invariants tested over random interleavings'},
             'invariants': ['at most one live exclusive or once lease per key', 'a lease not refreshed is dead after its expiry', 'the log only grows and each entry binds all earlier ones',
-                           'look is never GREEN for you while another agent holds the key exclusively', 'a once key is granted to exactly one caller within its lifetime of thirty days'],
+                           'look is never GREEN for you while another agent holds the key exclusively', 'a shared claim that states slots is never granted while that many other agents hold the key', 'a once key is granted to exactly one caller within its lifetime of thirty days'],
             'limits': ['leases are advice between cooperating agents, not locks on the resource itself', 'an exclusive holder can come back after the clearance interval; the crossing caps how many leases one address holds and how long one is kept, it cannot stop a determined squatter', 'marks are statements by agents; weight is higher with a lease and evidence, and they are not verified facts',
                        'the count of others is what this crossing and the venue can see, not everyone in the world'],
             'licence': 'The protocol may be implemented by anyone, free of charge.'}
