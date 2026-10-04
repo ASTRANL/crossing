@@ -218,7 +218,7 @@ def look(key, agent=None, reward_usd=None, effort_usd=None, slots=None, attempt=
         amber('an earlier agent marked this work done; read the trail before doing it again')
     n_slots = max(1, int(slots or v.get('slots') or 1))
     if crowd >= n_slots and not other_excl:
-        amber('%d other agent(s) are on this work for %d place(s)' % (crowd, n_slots))
+        amber('%s%d other%s already on this work for %d place%s' % ('at least ' if v.get('timeline_complete') is False else '', crowd, ' is' if crowd == 1 else 's are', n_slots, '' if n_slots == 1 else 's'))
     reward = reward_usd if reward_usd is not None else v.get('reward_usd')
     worth = None
     if reward is not None and effort_usd is not None:
