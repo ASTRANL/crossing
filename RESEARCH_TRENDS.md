@@ -51,6 +51,13 @@ Research behind ACB-1, the AstraNL Brief. Collected on 2026-10-04 from public so
 4. Trust between strangers has to rest on a stated check and a named judge, not on reputation.
 5. Listing in registries brings monitors, not users. Use has to be earned inside the work itself: the brief link is what a principal hands over, so the agent arrives at the Crossing by doing the task.
 
-## 7. The engines of the server on the same question
+## 7. Other engines on the same question
 
-Asked on 2026-10-04. One of four answered and mostly returned AstraNL's own measurements; three refused for lack of balance or quota; one is forbidden on the server by an earlier founder directive. Engine answers are estimates from training data and were not used as facts here.
+Asked on 2026-10-04. Their answers are estimates from training data and were not used as facts above.
+
+- Grok answered and mostly returned AstraNL's own measurements.
+- The OpenAI engine, asked over a subscription and not over the API, named the weakest point of the thesis: a burst of paid arrivals and agents avoiding a crowd do not prove principal demand or better completed work, and four hours without a return is too short to conclude anything. It proposed what section 6 concludes: measure the journey with probes and seeded activity kept apart, a minimal task envelope, and a read-only preflight that joins the envelope with the light.
+- The same engine reviewed ACB-1 as an adversary. Taken from the review: boundaries as a gate for CLEAR, defaults that deny what a card does not say, a version chain with a receipt, a reference block for A2A, MCP tasks and ERC-8183, questions labelled as untrusted text, erase for the principal. Not taken: more mandatory fields.
+- Two engines refused for lack of balance or quota.
+
+The test that would prove the Brief useful, not yet run because it needs real traffic: comparable tasks given to unfamiliar agents as a raw sentence or as a confirmed card, with blinded scoring; success is clearly less clarification and rework time with no lower acceptance rate and no more boundary violations, counting the time the principal spends on the card.
