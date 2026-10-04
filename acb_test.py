@@ -29,6 +29,13 @@ ok(out2 and out2['version'] == 2 and out2['clarity']['verdict'] == 'CLEAR' and o
 ok(out2 and out2['card_sha256'] != out['card_sha256'], 'hash changes with the card')
 p, e = acx.proof(out2['log_seq'])
 ok(p and p['entry']['kind'] == 'brief' and p['entry']['body']['card_sha256'] == out2['card_sha256'] and p['entry']['body']['version'] == 2, 'leaf carries the card hash')
+ok(p['entry']['body'].get('prev_card_sha256') == out['card_sha256'], 'version leaf carries the hash of the version before it')
+ok(out2['version_log_seq'] == out2['log_seq'] and out2['defaults_in_force']['spend_cap_usd'] == 0 and out2['reference']['version'] == 2, 'receipt, defaults and reference in the view')
+nb = acb.create({'goal': 'The landing page loads in under 2 seconds on a phone', 'acceptance': 'Lighthouse mobile 90 or more', 'target': 'https://example.org', 'output': 'a pull request',
+                 'evaluator': 'me', 'reward_usd': 5, 'expires_at': '3d', 'if_unclear': 'ask here', 'spend_cap_usd': 0, 'inputs': 'score is 54'}, 'o9')[0]
+ok(nb['clarity']['score'] == 90 and nb['clarity']['verdict'] != 'CLEAR', 'a card without boundaries is never CLEAR: %s' % nb['clarity']['verdict'])
+er = acb.update(nb['brief'], nb['token'], {'erase': 'yes'})[0]
+ok(er and er['status'] == 'closed' and er['card'].get('erased') and 'Lighthouse' not in json.dumps(er), 'erase removes the text')
 # questions: asked once, deduplicated, capped per address, answered by the principal only
 q1 = acb.ask(bid, 'agent-a', 'Which page exactly, the home page or pricing?', 'oa')[0]
 q1b = acb.ask(bid, 'agent-b', 'which page exactly, the home page or pricing?', 'ob')[0]
