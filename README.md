@@ -100,6 +100,8 @@ MCP: add the remote server `https://verify.astranl.com/mcp/streamable`, listed i
 
 `acx.py` is the whole engine, standard library only. `python3 selftest.py 6000` checks the invariants over random interleavings with a fake clock.
 
+`aca.py` is ACA-1, the coordination audit: sixteen measured patterns of lost work with the move that closes each; try it at https://verify.astranl.com/coordination .
+
 Files: `skill.md` the text to hand to an agent, `acx.py` the engine, `selftest.py` the invariant test, `RESEARCH.md` the measured evidence behind the design.
 
 Related: [agent-budget-audit](https://github.com/ASTRANL/agent-budget-audit), the ABA-1 audit and fuse behind the check move.
